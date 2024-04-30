@@ -10,6 +10,7 @@ import (
 
 const (
 	PORT             = "4221"
+	VERSION          = "HTTP/1.1"
 	CRLF             = "\r\n"
 	MAX_REQUEST_SIZE = 1024
 	OK               = "200 OK"
@@ -27,16 +28,16 @@ type HTTPRequest struct {
 	Method  string
 	Path    string
 	Version string
+	Headers map[string]string
 }
 
 func NewHTTPResponse(code int, headers map[string]string, body []byte) (response *HTTPResponse) {
 	response = &HTTPResponse{
-		Version: "HTTP/1.1",
+		Version: VERSION,
 		Headers: headers,
 		Body:    body,
 	}
 	response.Headers["Content-Length"] = fmt.Sprintf("%d", len(body))
-
 
 	switch code {
 	case 200:
@@ -57,13 +58,27 @@ func NewHTTPRequest(conn net.Conn) (req *HTTPRequest, err error) {
 
 	buf = buf[:n]
 	req = &HTTPRequest{
-		// Headers: make(map[string]string),
+		Headers: make(map[string]string),
 	}
 	lines := bytes.Split(buf, []byte(CRLF))
-	fmt.Sscanf(string(lines[0]), "%s %s %s", &req.Method, &req.Path, &req.Version)
 
-	// print all the request
-	fmt.Println(req)
+	for i, line := range lines {
+		if i == 0 {
+			fmt.Sscanf(string(line), "%s %s %s", &req.Method, &req.Path, &req.Version)
+		} else {
+			header_elem := bytes.Split(line, []byte(": "))
+			if len(header_elem) == 2 {
+				key := string(header_elem[0])
+				value := string(header_elem[1])
+				req.Headers[key] = value
+			} else {
+				fmt.Println("Error parsing header: ", string(line))
+			}
+		}
+	}
+
+	fmt.Printf("Received request: %+v\n", req)
+
 	return req, err
 }
 
@@ -102,15 +117,18 @@ func main() {
 			fmt.Println("Error parsing request: ", err.Error())
 			os.Exit(1)
 		}
-		
+
 		headers := make(map[string]string)
 		body := []byte{}
-
 
 		if request.Path == "/" {
 			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
 		} else if strings.HasPrefix(request.Path, "/echo/") {
 			body = []byte(strings.TrimPrefix(request.Path, "/echo/"))
+			headers["Content-Type"] = "text/plain"
+			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+		} else if request.Path == "/user-agent" {
+			body = []byte(request.Headers["User-Agent"])
 			headers["Content-Type"] = "text/plain"
 			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
 		} else {
