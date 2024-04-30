@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -97,7 +99,16 @@ func (r *HTTPResponse) ToBytes() (response []byte) {
 }
 
 func main() {
-	fmt.Println("Logs from your program will appear here!")
+	var directory string
+	flag.StringVar(&directory, "directory", "", "")
+	flag.Parse()
+	fmt.Println("File Directory:", directory)
+	if directory != "" {
+		if _, err := os.Stat(directory); os.IsNotExist(err) {
+			fmt.Println("Passed Directory does not exist", err)
+			os.Exit(1)
+		}
+	}
 
 	l, err := net.Listen("tcp", fmt.Sprintf(":%s", PORT))
 	if err != nil {
@@ -112,12 +123,12 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go HandleConnection(conn)
+		go HandleConnection(conn, directory)
 	}
 }
 
 
-func HandleConnection(conn net.Conn) {
+func HandleConnection(conn net.Conn, directory string) {
 	defer conn.Close()
 	request, err := NewHTTPRequest(conn)
 	if err != nil {
@@ -137,6 +148,22 @@ func HandleConnection(conn net.Conn) {
 	} else if request.Path == "/user-agent" {
 		body = []byte(request.Headers["User-Agent"])
 		headers["Content-Type"] = "text/plain"
+		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+	} else if strings.HasPrefix(request.Path, "/files/") {
+		fileName := strings.TrimPrefix(request.Path, "/files/")
+		filePath := path.Join(directory, fileName)
+		fmt.Println("File Name:", fileName)
+		file, err := os.Open(filePath)
+		if err != nil {
+			conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
+		}
+		defer file.Close()
+		body, err = os.ReadFile(filePath)
+		if err != nil {
+			fmt.Println("Error reading file: ", err.Error())
+			os.Exit(1)
+		}
+		headers["Content-Type"] = "application/octet-stream"
 		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
 	} else {
 		conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
