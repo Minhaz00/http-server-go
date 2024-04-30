@@ -5,17 +5,22 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 )
 
 const (
-	PORT = "4221"
-	CRLF = "\r\n"
+	PORT             = "4221"
+	CRLF             = "\r\n"
 	MAX_REQUEST_SIZE = 1024
+	OK               = "200 OK"
+	NOT_FOUND        = "404 Not Found"
 )
 
 type HTTPResponse struct {
 	Version string
 	Status  string
+	Headers map[string]string
+	Body    []byte
 }
 
 type HTTPRequest struct {
@@ -24,25 +29,23 @@ type HTTPRequest struct {
 	Version string
 }
 
-func NewHTTPResponse(code int) *HTTPResponse {
+func NewHTTPResponse(code int, headers map[string]string, body []byte) (response *HTTPResponse) {
+	response = &HTTPResponse{
+		Version: "HTTP/1.1",
+		Headers: headers,
+		Body:    body,
+	}
+	response.Headers["Content-Length"] = fmt.Sprintf("%d", len(body))
+
+
 	switch code {
 	case 200:
-		return &HTTPResponse{
-			Version: "HTTP/1.1",
-			Status:  "200 OK",
-		}
+		response.Status = OK
 	case 404:
-		return &HTTPResponse{
-			Version: "HTTP/1.1",
-			Status:  "404 Not Found",
-		}
+		response.Status = NOT_FOUND
 	}
-	return &HTTPResponse{
-		Version: "HTTP/1.1",
-		Status:  "500 Internal Server Error",
-	}
+	return response
 }
-
 
 func NewHTTPRequest(conn net.Conn) (req *HTTPRequest, err error) {
 	buf := make([]byte, MAX_REQUEST_SIZE)
@@ -59,25 +62,34 @@ func NewHTTPRequest(conn net.Conn) (req *HTTPRequest, err error) {
 	lines := bytes.Split(buf, []byte(CRLF))
 	fmt.Sscanf(string(lines[0]), "%s %s %s", &req.Method, &req.Path, &req.Version)
 
+	// print all the request
+	fmt.Println(req)
 	return req, err
 }
 
 func (r *HTTPResponse) ToBytes() (response []byte) {
 	response = []byte{}
 	response = append(response, fmt.Sprintf("%s %s%s", r.Version, r.Status, CRLF)...)
+
+	for k, v := range r.Headers {
+		response = append(response, fmt.Sprintf("%s: %s%s", k, v, CRLF)...)
+	}
+	response = append(response, CRLF...)
+	response = append(response, fmt.Sprintf("%s%s", r.Body, CRLF)...)
+
 	response = append(response, CRLF...)
 	return response
 }
 
 func main() {
 	fmt.Println("Logs from your program will appear here!")
-	
+
 	l, err := net.Listen("tcp", fmt.Sprintf(":%s", PORT))
 	if err != nil {
 		fmt.Printf("Error listening on port %s: %s\n", PORT, err.Error())
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Listening on port %s\n", PORT)
 	for {
 		conn, err := l.Accept()
@@ -90,11 +102,19 @@ func main() {
 			fmt.Println("Error parsing request: ", err.Error())
 			os.Exit(1)
 		}
-		switch request.Path {
-		case "/":
-			conn.Write(NewHTTPResponse(200).ToBytes())
-		default:
-			conn.Write(NewHTTPResponse(404).ToBytes())
+		
+		headers := make(map[string]string)
+		body := []byte{}
+
+
+		if request.Path == "/" {
+			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+		} else if strings.HasPrefix(request.Path, "/echo/") {
+			body = []byte(strings.TrimPrefix(request.Path, "/echo/"))
+			headers["Content-Type"] = "text/plain"
+			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+		} else {
+			conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
 		}
 		conn.Close()
 	}
