@@ -112,28 +112,34 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		request, err := NewHTTPRequest(conn)
-		if err != nil {
-			fmt.Println("Error parsing request: ", err.Error())
-			os.Exit(1)
-		}
-
-		headers := make(map[string]string)
-		body := []byte{}
-
-		if request.Path == "/" {
-			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
-		} else if strings.HasPrefix(request.Path, "/echo/") {
-			body = []byte(strings.TrimPrefix(request.Path, "/echo/"))
-			headers["Content-Type"] = "text/plain"
-			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
-		} else if request.Path == "/user-agent" {
-			body = []byte(request.Headers["User-Agent"])
-			headers["Content-Type"] = "text/plain"
-			conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
-		} else {
-			conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
-		}
-		conn.Close()
+		go HandleConnection(conn)
 	}
+}
+
+
+func HandleConnection(conn net.Conn) {
+	defer conn.Close()
+	request, err := NewHTTPRequest(conn)
+	if err != nil {
+        fmt.Println("Error parsing request: ", err.Error())
+		os.Exit(1)
+    }
+
+	headers := make(map[string]string)
+	body := []byte{}
+
+	if request.Path == "/" {
+		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+	} else if strings.HasPrefix(request.Path, "/echo/") {
+		body = []byte(strings.TrimPrefix(request.Path, "/echo/"))
+		headers["Content-Type"] = "text/plain"
+		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+	} else if request.Path == "/user-agent" {
+		body = []byte(request.Headers["User-Agent"])
+		headers["Content-Type"] = "text/plain"
+		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+	} else {
+		conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
+	}
+
 }
