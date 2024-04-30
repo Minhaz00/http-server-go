@@ -17,6 +17,8 @@ const (
 	MAX_REQUEST_SIZE = 1024
 	OK               = "200 OK"
 	NOT_FOUND        = "404 Not Found"
+	CREATED          = "201 Created"
+	NOT_ALLOW        = "405 Method Not Allowed"
 )
 
 type HTTPResponse struct {
@@ -31,6 +33,7 @@ type HTTPRequest struct {
 	Path    string
 	Version string
 	Headers map[string]string
+	Body    []byte
 }
 
 func NewHTTPResponse(code int, headers map[string]string, body []byte) (response *HTTPResponse) {
@@ -46,7 +49,12 @@ func NewHTTPResponse(code int, headers map[string]string, body []byte) (response
 		response.Status = OK
 	case 404:
 		response.Status = NOT_FOUND
+	case 405:
+		response.Status = NOT_ALLOW
+	case 201:
+		response.Status = CREATED
 	}
+
 	return response
 }
 
@@ -65,16 +73,17 @@ func NewHTTPRequest(conn net.Conn) (req *HTTPRequest, err error) {
 	lines := bytes.Split(buf, []byte(CRLF))
 
 	for i, line := range lines {
+		fmt.Println(string(line))
 		if i == 0 {
 			fmt.Sscanf(string(line), "%s %s %s", &req.Method, &req.Path, &req.Version)
+		} else if i == len(lines)-1 {
+			req.Body = line
 		} else {
 			header_elem := bytes.Split(line, []byte(": "))
 			if len(header_elem) == 2 {
 				key := string(header_elem[0])
 				value := string(header_elem[1])
 				req.Headers[key] = value
-			} else {
-				fmt.Println("Error parsing header: ", string(line))
 			}
 		}
 	}
@@ -127,44 +136,75 @@ func main() {
 	}
 }
 
-
 func HandleConnection(conn net.Conn, directory string) {
 	defer conn.Close()
 	request, err := NewHTTPRequest(conn)
 	if err != nil {
-        fmt.Println("Error parsing request: ", err.Error())
+		fmt.Println("Error parsing request: ", err.Error())
 		os.Exit(1)
-    }
+	}
 
 	headers := make(map[string]string)
 	body := []byte{}
 
 	if request.Path == "/" {
+
 		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+
 	} else if strings.HasPrefix(request.Path, "/echo/") {
+
 		body = []byte(strings.TrimPrefix(request.Path, "/echo/"))
 		headers["Content-Type"] = "text/plain"
 		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+
 	} else if request.Path == "/user-agent" {
+
 		body = []byte(request.Headers["User-Agent"])
 		headers["Content-Type"] = "text/plain"
 		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+
 	} else if strings.HasPrefix(request.Path, "/files/") {
+
 		fileName := strings.TrimPrefix(request.Path, "/files/")
 		filePath := path.Join(directory, fileName)
-		fmt.Println("File Name:", fileName)
-		file, err := os.Open(filePath)
-		if err != nil {
-			conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
+
+		switch request.Method {
+
+			case "GET":
+				file, err := os.Open(filePath)
+				if err != nil {
+					conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
+				}
+				defer file.Close()
+				body, err = os.ReadFile(filePath)
+				if err != nil {
+					fmt.Println("Error reading file: ", err.Error())
+					os.Exit(1)
+				}
+				headers["Content-Type"] = "application/octet-stream"
+				conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+
+			case "POST":
+				fileName := strings.TrimPrefix(request.Path, "/files/")
+				filePath := path.Join(directory, fileName)
+				file, err := os.Create(filePath)
+				if err != nil {
+					fmt.Println("Error creating file: ", err.Error())
+					os.Exit(1)
+				}
+				defer file.Close()
+				_, err = file.Write(request.Body)
+				if err != nil {
+					fmt.Println("Error writing to file: ", err.Error())
+					os.Exit(1)
+				}
+				headers["Content-Type"] = "application/octet-stream"
+				conn.Write(NewHTTPResponse(201, headers, body).ToBytes())
+				
+			default:
+				conn.Write(NewHTTPResponse(405, headers, body).ToBytes())
 		}
-		defer file.Close()
-		body, err = os.ReadFile(filePath)
-		if err != nil {
-			fmt.Println("Error reading file: ", err.Error())
-			os.Exit(1)
-		}
-		headers["Content-Type"] = "application/octet-stream"
-		conn.Write(NewHTTPResponse(200, headers, body).ToBytes())
+
 	} else {
 		conn.Write(NewHTTPResponse(404, headers, body).ToBytes())
 	}
